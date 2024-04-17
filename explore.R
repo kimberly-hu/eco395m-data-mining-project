@@ -1,9 +1,25 @@
 library(tidyverse)
 library(ggplot2)
+library(lubridate)
+library(tm)
+library(tidytext)
+library(geosphere)
+
 
 setwd("C:/Users/kimbe/Desktop/Repo/eco395m-data-mining-project")
 
-listing = read.csv("data/raw_data/listings2403.csv")
+listing2403 = read.csv("data/raw_data/listings2403.csv")
+listing2402 = read.csv("data/raw_data/listings2402.csv")
+listing2401 = read.csv("data/raw_data/listings2401.csv")
+listing2312 = read.csv("data/raw_data/listings2312.csv")
+listing2311 = read.csv("data/raw_data/listings2311.csv")
+listing2310 = read.csv("data/raw_data/listings2310.csv")
+
+listing = bind_rows(listing2403, listing2402, listing2401, 
+                    listing2312, listing2311, listing2310)
+
+listing = listing %>% mutate(id = as.character(id))
+listing = distinct(listing, id, .keep_all = TRUE)
 
 
 listing = listing %>%
@@ -18,6 +34,8 @@ listing = listing %>%
             host_neighbourhood,
             neighbourhood, 
             bathrooms_text, 
+            minimum_nights,
+            maximum_nights,
             minimum_minimum_nights, 
             maximum_minimum_nights, 
             minimum_maximum_nights, 
@@ -38,7 +56,7 @@ listing = listing %>%
             calculated_host_listings_count_shared_rooms, 
             number_of_reviews_ltm, 
             number_of_reviews_l30d, 
-            host_since, 
+            host_since,
             host_total_listings_count, 
             host_verifications, 
             property_type,
@@ -50,9 +68,6 @@ listing = listing %>%
 # data cleaning and formatting
 
 listing_clean = listing
-
-listing_clean = listing_clean %>%
-  mutate(id = as.character(id))
 
 listing_clean = listing_clean %>%
   mutate(host_id = as.character(host_id))
@@ -118,11 +133,10 @@ amenity_counts = listing_temp %>%
   summarise(count = n(), .groups = 'drop') %>%
   arrange(desc(count))
 
-amenity_list <- c("Hair dryer", "Refrigerator", "Microwave", 
-                  "Washer", "Pets allowed")
+amenity_list = c("Hair dryer", "Refrigerator", "Microwave", "Washer")
 
-listing_clean$amenities <- lapply(listing_clean$amenities, function(x) {
-  amenities_list <- str_remove_all(x, "\\[|\\]|\"")
+listing_clean$amenities = lapply(listing_clean$amenities, function(x) {
+  amenities_list = str_remove_all(x, "\\[|\\]|\"")
   str_split(amenities_list, ",\\s*")[[1]]
 })
 
@@ -132,21 +146,120 @@ for (amenity in amenity_list) {
                                         function(x) as.integer(amenity %in% x))
 }
 
+listing_clean = select(listing_clean, -amenities)
+
 
 
 # calculate time between last_scrape and first_review/last_review
 
+listing_clean = listing_clean %>%
+  mutate(
+    last_scraped = ymd(last_scraped),
+    first_review = ymd(first_review),
+    last_review = ymd(last_review),
+    days_first_review = as.integer(last_scraped - first_review),
+    days_last_review = as.integer(last_scraped - last_review)
+  ) %>%
+  select(-c(first_review, last_review))
+
+
+# For "neighborhood_overview", "host_about", indicator equals 1 if not NA, 0 otherwise
+
+listing_clean = listing_clean %>%
+  mutate(neighborhood_overview = ifelse(neighborhood_overview == "", 0, 1),
+         host_about = ifelse(host_about == "", 0, 1)
+         )
 
 
 
+# extract common keywords in "name", and create dummies for them
+
+text_corpus = Corpus(VectorSource(listing_clean$name))
+
+text_corpus = tm_map(text_corpus, content_transformer(tolower))
+text_corpus = tm_map(text_corpus, removePunctuation)
+text_corpus = tm_map(text_corpus, removeNumbers)
+text_corpus = tm_map(text_corpus, content_transformer(stripWhitespace))
+text_corpus = tm_map(text_corpus, removeWords, stopwords("en"))
+
+text_corpus = tm_filter(text_corpus, function(x) length(unlist(strsplit(as.character(x), " "))) > 0)
+
+dtm = TermDocumentMatrix(text_corpus)
+m = as.matrix(dtm)
+word_freqs = sort(rowSums(m), decreasing = TRUE)
+word_freqs_df = data.frame(word = names(word_freqs), freq = word_freqs)
+#head(word_freqs_df)
+
+listing_clean = listing_clean %>%
+  mutate(
+    cozy_name = as.integer(str_detect(name, regex("cozy", ignore_case = TRUE))),
+    spacious_name = as.integer(str_detect(name, regex("spacious", ignore_case = TRUE)))
+  )
 
 
 
+# extract common keywords in "description", and create dummies for them
+
+text_corpus = Corpus(VectorSource(listing_clean$description))
+
+text_corpus = tm_map(text_corpus, content_transformer(tolower))
+text_corpus = tm_map(text_corpus, removePunctuation)
+text_corpus = tm_map(text_corpus, removeNumbers)
+text_corpus = tm_map(text_corpus, content_transformer(stripWhitespace))
+text_corpus = tm_map(text_corpus, removeWords, stopwords("en"))
+
+text_corpus = tm_filter(text_corpus, function(x) length(unlist(strsplit(as.character(x), " "))) > 0)
+
+dtm = TermDocumentMatrix(text_corpus)
+m = as.matrix(dtm)
+word_freqs = sort(rowSums(m), decreasing = TRUE)
+word_freqs_df = data.frame(word = names(word_freqs), freq = word_freqs)
+#head(word_freqs_df)
+
+listing_clean = listing_clean %>%
+  mutate(
+    located_desc = as.integer(str_detect(name, regex("located", ignore_case = TRUE))),
+    restaurants_desc = as.integer(str_detect(name, regex("restaurants", ignore_case = TRUE))),
+    walk_desc = as.integer(str_detect(name, regex("walk", ignore_case = TRUE))),
+    new_desc = as.integer(str_detect(name, regex("new", ignore_case = TRUE)))
+  )
 
 
 
+# location related data
 
-# feature engineering
-# key words from "name", "description", "neighborhood_review", "host_about"
-# pick amenities
-# calculate time between last_scrape and first/last review
+listing_loc = listing %>%
+  select(id, latitude, longitude)
+
+listing_loc = listing_loc %>%
+  mutate(dt_lat = 40.7182354, 
+         dt_lon = -74.0045347,
+         park_lat = 40.7807599,
+         park_lon = -73.9770873,
+         times_lat = 40.7579068,
+         times_lon = -73.9883212
+         )
+
+listing_loc = listing_loc %>%
+  mutate(
+    dist_dt = pmap_dbl(list(longitude, latitude, dt_lon, dt_lat), 
+                       ~ distm(matrix(c(..1, ..2), nrow = 1),
+                               matrix(c(..3, ..4), nrow = 1),
+                               fun = distHaversine)),
+    dist_park = pmap_dbl(list(longitude, latitude, park_lon, park_lat), 
+                         ~ distm(matrix(c(..1, ..2), nrow = 1),
+                                 matrix(c(..3, ..4), nrow = 1),
+                                 fun = distHaversine)),
+    dist_times = pmap_dbl(list(longitude, latitude, times_lon, times_lat), 
+                          ~ distm(matrix(c(..1, ..2), nrow = 1),
+                                  matrix(c(..3, ..4), nrow = 1),
+                                  fun = distHaversine))
+  ) %>%
+  select(-c(dt_lat, dt_lon, dt_))
+
+listing_clean = listing_clean %>%
+  left_join(listing_loc[, c("id", "dist_dt", "dist_park", "dist_times")], by = "id")
+
+
+
+write.csv(listing_clean, file = "data/listing.csv", row.names = FALSE)
