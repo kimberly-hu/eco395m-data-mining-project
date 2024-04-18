@@ -21,6 +21,9 @@ listing = bind_rows(listing2403, listing2402, listing2401,
 listing = listing %>% mutate(id = as.character(id))
 listing = distinct(listing, id, .keep_all = TRUE)
 
+write.csv(listing, file = "data/listing.csv", row.names = FALSE, quote = TRUE, fileEncoding = "UTF-8")
+
+
 
 listing = listing %>%
   select(-c(listing_url, 
@@ -262,4 +265,5 @@ listing_clean = listing_clean %>%
 
 
 
-write.csv(listing_clean, file = "data/listing.csv", row.names = FALSE)
+write.csv(listing_clean, file = "data/listing_clean.csv", 
+          row.names = FALSE, quote = TRUE, fileEncoding = "UTF-8")
