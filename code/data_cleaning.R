@@ -1,5 +1,4 @@
 library(tidyverse)
-library(ggplot2)
 library(lubridate)
 library(tm)
 library(tidytext)
@@ -21,10 +20,12 @@ listing = bind_rows(listing2403, listing2402, listing2401,
 listing = listing %>% mutate(id = as.character(id))
 listing = distinct(listing, id, .keep_all = TRUE)
 
-write.csv(listing, file = "data/listing.csv", row.names = FALSE, quote = TRUE, fileEncoding = "UTF-8")
+write.csv(listing, file = "data/listing.csv", row.names = FALSE, 
+          quote = TRUE, fileEncoding = "UTF-8")
 
 
 
+# Select variables
 listing = listing %>%
   select(-c(listing_url, 
             scrape_id, 
@@ -36,9 +37,7 @@ listing = listing %>%
             host_picture_url, 
             host_neighbourhood,
             neighbourhood, 
-            bathrooms_text, 
-            minimum_nights,
-            maximum_nights,
+            bathrooms_text,
             minimum_minimum_nights, 
             maximum_minimum_nights, 
             minimum_maximum_nights, 
@@ -67,8 +66,12 @@ listing = listing %>%
          )
 
 
+# Do not include hotel rooms
+listing = filter(listing, room_type!="Hotel room")
 
-# data cleaning and formatting
+
+
+# Data cleaning and formatting
 
 listing_clean = listing
 
@@ -112,14 +115,16 @@ listing_clean = listing_clean %>%
          instant_bookable = recode(instant_bookable, "t" = 1, "f" = 0,),
          instant_bookable = as.integer(instant_bookable))
 
-listing_clean <- listing_clean %>%
+listing_clean = listing_clean %>%
   mutate(price = str_remove(price, "\\$"),
          price = str_replace_all(price, ",", ""),
          price = as.numeric(price))
 
 
 
-# pick some medium frequency amenities, and create dummy variables for them
+# Feature engineering
+
+# Find popular amenities and create dummy variables for them
 
 listing_temp = listing_clean %>%
   select(id, amenities)
@@ -136,7 +141,8 @@ amenity_counts = listing_temp %>%
   summarise(count = n(), .groups = 'drop') %>%
   arrange(desc(count))
 
-amenity_list = c("Hair dryer", "Refrigerator", "Microwave", "Washer")
+amenity_list = c("Refrigerator", "Microwave", "Washer", "Pets allowed", 
+                 "Extra pillows and blankets")
 
 listing_clean$amenities = lapply(listing_clean$amenities, function(x) {
   amenities_list = str_remove_all(x, "\\[|\\]|\"")
@@ -149,12 +155,16 @@ for (amenity in amenity_list) {
                                         function(x) as.integer(amenity %in% x))
 }
 
-listing_clean = select(listing_clean, -amenities)
+listing_clean = listing_clean %>%
+  select(-amenities) %>%
+  rename(refrigerator = Refrigerator,
+         microwave = Microwave,
+         washer = Washer, 
+         pets_allowed = Pets_allowed, 
+         extra_pillows_and_blankets = Extra_pillows_and_blankets)
 
 
-
-# calculate time between last_scrape and first_review/last_review
-
+# Calculate time between last_scrape and first_review/last_review
 listing_clean = listing_clean %>%
   mutate(
     last_scraped = ymd(last_scraped),
@@ -166,16 +176,15 @@ listing_clean = listing_clean %>%
   select(-c(first_review, last_review))
 
 
-# For "neighborhood_overview", "host_about", indicator equals 1 if not NA, 0 otherwise
+# Length of text from "neighborhood_overview", "host_about"
 
 listing_clean = listing_clean %>%
-  mutate(neighborhood_overview = ifelse(neighborhood_overview == "", 0, 1),
-         host_about = ifelse(host_about == "", 0, 1)
-         )
+  mutate(len_neighborhood_overview = nchar(neighborhood_overview),
+         len_host_about = nchar(host_about)) %>%
+  select(-c(neighborhood_overview, host_about))
 
 
-
-# extract common keywords in "name", and create dummies for them
+# Extract common keywords in "name", and create dummies for them
 
 text_corpus = Corpus(VectorSource(listing_clean$name))
 
@@ -185,13 +194,14 @@ text_corpus = tm_map(text_corpus, removeNumbers)
 text_corpus = tm_map(text_corpus, content_transformer(stripWhitespace))
 text_corpus = tm_map(text_corpus, removeWords, stopwords("en"))
 
-text_corpus = tm_filter(text_corpus, function(x) length(unlist(strsplit(as.character(x), " "))) > 0)
+text_corpus = tm_filter(text_corpus, 
+                        function(x) length(unlist(strsplit(as.character(x), " "))) > 0)
 
 dtm = TermDocumentMatrix(text_corpus)
 m = as.matrix(dtm)
 word_freqs = sort(rowSums(m), decreasing = TRUE)
 word_freqs_df = data.frame(word = names(word_freqs), freq = word_freqs)
-#head(word_freqs_df)
+#head(word_freqs_df, 20)
 
 listing_clean = listing_clean %>%
   mutate(
@@ -201,7 +211,7 @@ listing_clean = listing_clean %>%
 
 
 
-# extract common keywords in "description", and create dummies for them
+# Extract common keywords in "description", and create dummies for them
 
 text_corpus = Corpus(VectorSource(listing_clean$description))
 
@@ -211,13 +221,14 @@ text_corpus = tm_map(text_corpus, removeNumbers)
 text_corpus = tm_map(text_corpus, content_transformer(stripWhitespace))
 text_corpus = tm_map(text_corpus, removeWords, stopwords("en"))
 
-text_corpus = tm_filter(text_corpus, function(x) length(unlist(strsplit(as.character(x), " "))) > 0)
+text_corpus = tm_filter(text_corpus, 
+                        function(x) length(unlist(strsplit(as.character(x), " "))) > 0)
 
 dtm = TermDocumentMatrix(text_corpus)
 m = as.matrix(dtm)
 word_freqs = sort(rowSums(m), decreasing = TRUE)
 word_freqs_df = data.frame(word = names(word_freqs), freq = word_freqs)
-#head(word_freqs_df)
+#head(word_freqs_df, 20)
 
 listing_clean = listing_clean %>%
   mutate(
@@ -228,19 +239,18 @@ listing_clean = listing_clean %>%
   )
 
 
-
-# location related data
+# Calculate distance to Downtown, Central Park, Empire State Building
 
 listing_loc = listing %>%
   select(id, latitude, longitude)
 
 listing_loc = listing_loc %>%
-  mutate(dt_lat = 40.7182354, 
-         dt_lon = -74.0045347,
-         park_lat = 40.7807599,
-         park_lon = -73.9770873,
-         times_lat = 40.7579068,
-         times_lon = -73.9883212
+  mutate(dt_lat = 40.706821, 
+         dt_lon = -74.0091,
+         park_lat = 40.78133976473782,
+         park_lon = -73.96662084465494,
+         empire_lat = 40.74842927376084,
+         empire_lon = -73.985322454067
          )
 
 listing_loc = listing_loc %>%
@@ -253,17 +263,19 @@ listing_loc = listing_loc %>%
                          ~ distm(matrix(c(..1, ..2), nrow = 1),
                                  matrix(c(..3, ..4), nrow = 1),
                                  fun = distHaversine)),
-    dist_times = pmap_dbl(list(longitude, latitude, times_lon, times_lat), 
+    dist_empire = pmap_dbl(list(longitude, latitude, empire_lon, empire_lat), 
                           ~ distm(matrix(c(..1, ..2), nrow = 1),
                                   matrix(c(..3, ..4), nrow = 1),
                                   fun = distHaversine))
-  ) %>%
-  select(-c(dt_lat, dt_lon, dt_))
+  )
 
 listing_clean = listing_clean %>%
-  left_join(listing_loc[, c("id", "dist_dt", "dist_park", "dist_times")], by = "id")
+  left_join(listing_loc[, c("id", "dist_dt", "dist_park", "dist_empire")], by = "id")
 
 
+
+# Remove NA in Price
+listing_clean = filter(listing_clean, is.na(price)==FALSE)
 
 write.csv(listing_clean, file = "data/listing_clean.csv", 
           row.names = FALSE, quote = TRUE, fileEncoding = "UTF-8")
