@@ -108,9 +108,6 @@ listing_clean = listing_clean %>%
          host_identity_verified = as.integer(host_identity_verified))
 
 listing_clean = listing_clean %>%
-  mutate(room_type = factor(room_type))
-
-listing_clean = listing_clean %>%
   mutate(instant_bookable = na_if(instant_bookable, ""),
          instant_bookable = recode(instant_bookable, "t" = 1, "f" = 0,),
          instant_bookable = as.integer(instant_bookable))
@@ -119,7 +116,11 @@ listing_clean = listing_clean %>%
   mutate(price = str_remove(price, "\\$"),
          price = str_replace_all(price, ",", ""),
          price = as.numeric(price))
-
+  
+listing_clean = listing_clean %>%
+  mutate(room_type = factor(room_type),
+         neighbourhood_cleansed = factor(neighbourhood_cleansed),
+         neighbourhood_group_cleansed = factor(neighbourhood_group_cleansed))
 
 
 # Feature engineering

@@ -13,7 +13,7 @@ listing_clean = read.csv("data/listing_clean.csv")
 # Remove outliers
 
 summary(listing_clean$price)
-quantile(listing_clean$price, c(0.005, 0.995)) 
+quantile(listing_clean$price, c(0.025, 0.975)) 
 
 top_prices = listing_eda %>%
   select(id, name, price) %>%
@@ -25,7 +25,7 @@ bottom_prices = listing_eda %>%
   arrange(price) %>%
   slice(1:50)
 
-listing_map = filter(listing_clean, price <= 1999 & price >= 30)  # keep 99% prices
+listing_map = filter(listing_clean, price <= 790 & price >= 36)  # keep 95% prices
 summary(listing_map$price)
 
 
