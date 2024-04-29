@@ -1,0 +1,687 @@
+---
+title: "How much should I charge?"
+subtitle: "Airbnb Listing Price Prediction using Machine Learning"
+author: "Kimberly Hu"
+date: "2024-04-29"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r packages}
+
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(tm)
+library(tidytext)
+library(geosphere)
+library(ggmap)
+library(kableExtra)
+library(knitr)
+library(car)
+library(rsample)
+library(glmnet)
+library(caret)
+library(modelr)
+library(randomForest)
+library(xgboost)
+library(quantregForest)
+library(pdp)
+library(gridExtra)
+
+```
+
+```{r data-cleaning}
+
+# Read raw data
+listing = read.csv("listing.csv")
+
+# Select variables
+listing = listing %>%
+  select(-c(listing_url, 
+            scrape_id, 
+            source, 
+            picture_url, 
+            host_url, 
+            host_location, 
+            host_thumbnail_url, 
+            host_picture_url, 
+            host_neighbourhood,
+            neighbourhood, 
+            bathrooms_text,
+            minimum_minimum_nights, 
+            maximum_minimum_nights, 
+            minimum_maximum_nights, 
+            maximum_maximum_nights, 
+            minimum_nights_avg_ntm, 
+            maximum_nights_avg_ntm, 
+            calendar_updated, 
+            has_availability, 
+            availability_30, 
+            availability_60, 
+            availability_90, 
+            availability_365, 
+            calendar_last_scraped, 
+            license, 
+            calculated_host_listings_count,
+            calculated_host_listings_count_entire_homes,
+            calculated_host_listings_count_private_rooms, 
+            calculated_host_listings_count_shared_rooms, 
+            number_of_reviews_ltm, 
+            number_of_reviews_l30d, 
+            host_since,
+            host_total_listings_count, 
+            host_verifications, 
+            property_type,
+            reviews_per_month)
+         )
+
+
+# Data cleaning and formatting
+
+listing_clean = filter(listing, room_type!="Hotel room")
+
+listing_clean = listing_clean %>%
+  mutate(host_id = as.character(host_id))
+
+listing_clean = listing_clean %>%
+  mutate(host_response_time = na_if(host_response_time, "N/A"),
+         host_response_time = na_if(host_response_time, ""),
+         host_response_time = factor(host_response_time), 
+         host_response_time = forcats::fct_drop(host_response_time))
+
+listing_clean = listing_clean %>%
+  mutate(host_acceptance_rate = str_remove(host_acceptance_rate, "%"), 
+         host_acceptance_rate = as.numeric(host_acceptance_rate) / 100)
+
+listing_clean = listing_clean %>%
+  mutate(host_response_rate = str_remove(host_response_rate, "%"), 
+         host_response_rate = as.numeric(host_response_rate) / 100)
+
+listing_clean = listing_clean %>%
+  mutate(host_is_superhost = na_if(host_is_superhost, ""),
+         host_is_superhost = ifelse(host_is_superhost == "t", 1, 0))
+
+listing_clean = listing_clean %>%
+  mutate(host_has_profile_pic = na_if(host_has_profile_pic, ""),
+         host_has_profile_pic = ifelse(host_has_profile_pic == "t", 1, 0))
+
+listing_clean = listing_clean %>%
+  mutate(host_identity_verified = na_if(host_identity_verified, ""),
+         host_identity_verified = ifelse(host_identity_verified == "t", 1, 0))
+
+listing_clean = listing_clean %>%
+  mutate(instant_bookable = na_if(instant_bookable, ""),
+         instant_bookable = ifelse(instant_bookable == "t", 1, 0))
+
+listing_clean = listing_clean %>%
+  mutate(price = str_remove(price, "\\$"),
+         price = str_replace_all(price, ",", ""),
+         price = as.numeric(price))
+  
+listing_clean = listing_clean %>%
+  mutate(room_type = factor(room_type),
+         neighbourhood_cleansed = factor(neighbourhood_cleansed),
+         neighbourhood_group_cleansed = factor(neighbourhood_group_cleansed))
+
+# Remove data with NA price
+listing_clean = filter(listing_clean, is.na(price)==FALSE)
+
+```
+
+
+## Abstract
+
+Setting the right price for an Airbnb rental is a key challenge faced every Airbnb host. In this project, I develop a predictive model to recommend listing prices to hosts, utilizing Airbnb listing data in New York City from October 2023 to March 2024, enriched with local points of interest data. I employed multiple algorithmic approaches, and identified that the XGBoost model outperformed others, achieving a minimum RMSE of approximately 67. An examination of feature importance reveals that factors such as the accommodation capacity, proximity to the city center, minimum stay requirements, and the number of bedrooms and bathrooms critically influence pricing decisions. Although the model exhibits limitations in its predictive accuracy, it provides valuable insights for hosts in setting rental prices. Several enhancements can be made to improve the performance of the model, including integrating historical booking data, applying time series analysis, and further model optimization.
+
+
+## 1 Introduction
+
+Setting an appropriate price for an Airbnb listing is crucial for success in the business, yet determining the optimal price can be quite complex. The listing price may be influenced by a wide variety of factors, including both the inherent characteristics of the apartment and the host, as well as external seasonal and market influences. Seasonal factors, such as holidays and local events, induce price fluctuations across the entire market, whereas the specific characteristics of the apartment and the host drive differences among individual listing prices. Since the aggregate market demand is hard to forecast, this project focuses on modeling prices based on the listing characteristics to provide hosts with insights into their relative position in the market. 
+
+Predicting Airbnb prices is of interest to many people, and there are numerous machine learning based projects on this topic. However, many of them rely solely on numerical or categorical data scraped from Airbnb, and do not incorporate data from additional sources. This project distinguishes itself by integrating extra information through extensive feature engineering, such as extracting keywords from titles and descriptions, calculating time differences between dates, and measuring distances between the property and specific sites. These steps enrich the data set and is beneficial for building a model with higher predictive accuracy. In addition, the project focuses specifically on New York City, due to its highly active Airbnb market and diverse properties. Since the average level of price varies greatly across different cities, it is more reliable to compare property prices within the same city.
+
+
+## 2 Methods
+
+### Data
+
+The main data of this project comes from [Inside Airbnb](https://insideairbnb.com/), which is an open data project that shares real listing information scraped from the Airbnb website. The data set I used is the “detailed listings data” for New York City and contains information related to listing and host. I merged the monthly detailed listings data from October 2023 to March 2024 and kept distinct listings to form a full data set containing 46403 observations. 
+
+Point of interest data are collected from [NYC Open Data](https://opendata.cityofnewyork.us/). The data set is compiled by multiple city agencies. I extracted the coordinates of Central Park, the Empire State Building, and the Downtown Financial District from the data set. 
+
+### Feature engineering
+
+Based on the collected data, I created some extra features for the listings: 
+
+- **Amenities:** Each Airbnb listing features a list of amenities associated with it. I examined the frequencies of these amenities across all listing data and selected five that appear with medium frequencies and might impact a guest's choice to stay. Subsequently, I created dummy variables to indicate whether an Airbnb listing includes these amenities. 
+
+- **Days between scraped time and review time:** I calculated the number of days between the scrape time and the first review, as well as the number of days between the scrape time and the last review. These indicate how long ago the reviews were made. 
+
+- **Keywords from listing title and description:** I extracted commonly used keywords from the listing title and listing description respectively, then created dummy variables for whether the title or description contained those keywords.
+
+- **Length of neighborhood and host descriptions:** The length of the neighborhood description and the host description as used as measures of complexity of these texts. 
+
+- **Distance to sites:** I calculated the distances between the property and the Central Park, the Empire State Building, and the Downtown Financial District, respectively. These sites were chosen because they are of interest to both tourists and residents of the city. 
+
+The full set of features are described in the appendix.
+
+```{r feature-engineering}
+
+# Some code are commented out for knit efficiency
+
+
+# Find popular amenities and create dummy variables for them
+
+# listing_temp = listing_clean %>%
+#   select(id, amenities)
+# 
+# listing_temp$amenities = lapply(listing_temp$amenities, 
+#                                  function(x) str_remove_all(x, "\\[|\\]|\""))
+# 
+# listing_temp = listing_temp %>%
+#   mutate(amenities = str_split(amenities, ",\\s*")) %>%
+#   unnest(amenities)
+# 
+# amenity_counts = listing_temp %>%
+#   group_by(amenities) %>%
+#   summarise(count = n(), .groups = 'drop') %>%
+#   arrange(desc(count))
+# head(amenity_counts, 30)
+
+amenity_list = c("Refrigerator", "Microwave", "Washer", "Pets allowed", 
+                 "Extra pillows and blankets")
+
+listing_clean$amenities = lapply(listing_clean$amenities, function(x) {
+  amenities_list = str_remove_all(x, "\\[|\\]|\"")
+  str_split(amenities_list, ",\\s*")[[1]]
+})
+
+for (amenity in amenity_list) {
+  column_name = gsub(" ", "_", amenity) 
+  listing_clean[[column_name]] = sapply(listing_clean$amenities, 
+                                        function(x) as.integer(amenity %in% x))
+}
+
+listing_clean = listing_clean %>%
+  select(-amenities) %>%
+  rename(refrigerator = Refrigerator,
+         microwave = Microwave,
+         washer = Washer, 
+         pets_allowed = Pets_allowed, 
+         extra_pillows_and_blankets = Extra_pillows_and_blankets)
+
+
+# Calculate time between last_scrape and first_review/last_review
+
+listing_clean = listing_clean %>%
+  mutate(
+    last_scraped = ymd(last_scraped),
+    first_review = ymd(first_review),
+    last_review = ymd(last_review),
+    days_first_review = as.integer(last_scraped - first_review),
+    days_last_review = as.integer(last_scraped - last_review)
+  ) %>%
+  select(-c(first_review, last_review))
+
+
+# Length of text from "neighborhood_overview", "host_about"
+
+listing_clean = listing_clean %>%
+  mutate(len_neighborhood_overview = nchar(neighborhood_overview),
+         len_host_about = nchar(host_about)) %>%
+  select(-c(neighborhood_overview, host_about))
+
+
+# Extract common keywords in "name", and create dummies for them
+
+# text_corpus = Corpus(VectorSource(listing_clean$name))
+# 
+# text_corpus = tm_map(text_corpus, content_transformer(tolower))
+# text_corpus = tm_map(text_corpus, removePunctuation)
+# text_corpus = tm_map(text_corpus, removeNumbers)
+# text_corpus = tm_map(text_corpus, content_transformer(stripWhitespace))
+# text_corpus = tm_map(text_corpus, removeWords, stopwords("en"))
+# 
+# text_corpus = tm_filter(text_corpus, 
+#                         function(x) length(unlist(strsplit(as.character(x), " "))) > 0)
+# 
+# dtm = TermDocumentMatrix(text_corpus)
+# m = as.matrix(dtm)
+# word_freqs = sort(rowSums(m), decreasing = TRUE)
+# word_freqs_df = data.frame(word = names(word_freqs), freq = word_freqs)
+# head(word_freqs_df, 20)
+
+listing_clean = listing_clean %>%
+  mutate(
+    cozy_name = as.integer(str_detect(name, regex("cozy", ignore_case = TRUE))),
+    spacious_name = as.integer(str_detect(name, regex("spacious", ignore_case = TRUE)))
+  )
+
+
+# Extract common keywords in "description", and create dummies for them
+
+# text_corpus = Corpus(VectorSource(listing_clean$description))
+# 
+# text_corpus = tm_map(text_corpus, content_transformer(tolower))
+# text_corpus = tm_map(text_corpus, removePunctuation)
+# text_corpus = tm_map(text_corpus, removeNumbers)
+# text_corpus = tm_map(text_corpus, content_transformer(stripWhitespace))
+# text_corpus = tm_map(text_corpus, removeWords, stopwords("en"))
+# 
+# text_corpus = tm_filter(text_corpus, 
+#                         function(x) length(unlist(strsplit(as.character(x), " "))) > 0)
+# 
+# dtm = TermDocumentMatrix(text_corpus)
+# m = as.matrix(dtm)
+# word_freqs = sort(rowSums(m), decreasing = TRUE)
+# word_freqs_df = data.frame(word = names(word_freqs), freq = word_freqs)
+# head(word_freqs_df, 20)
+
+listing_clean = listing_clean %>%
+  mutate(
+    located_desc = as.integer(str_detect(name, regex("located", ignore_case = TRUE))),
+    restaurants_desc = as.integer(str_detect(name, regex("restaurants", ignore_case = TRUE))),
+    walk_desc = as.integer(str_detect(name, regex("walk", ignore_case = TRUE))),
+    new_desc = as.integer(str_detect(name, regex("new", ignore_case = TRUE)))
+  )
+
+
+# Calculate distance to Downtown, Central Park, Empire State Building
+
+listing_loc = listing %>%
+  select(id, latitude, longitude)
+
+listing_loc = listing_loc %>%
+  mutate(dt_lat = 40.706821, 
+         dt_lon = -74.0091,
+         park_lat = 40.78133976473782,
+         park_lon = -73.96662084465494,
+         empire_lat = 40.74842927376084,
+         empire_lon = -73.985322454067
+         )
+
+listing_loc = listing_loc %>%
+  mutate(
+    dist_dt = pmap_dbl(list(longitude, latitude, dt_lon, dt_lat), 
+                       ~ distm(matrix(c(..1, ..2), nrow = 1),
+                               matrix(c(..3, ..4), nrow = 1),
+                               fun = distHaversine)),
+    dist_park = pmap_dbl(list(longitude, latitude, park_lon, park_lat), 
+                         ~ distm(matrix(c(..1, ..2), nrow = 1),
+                                 matrix(c(..3, ..4), nrow = 1),
+                                 fun = distHaversine)),
+    dist_empire = pmap_dbl(list(longitude, latitude, empire_lon, empire_lat), 
+                          ~ distm(matrix(c(..1, ..2), nrow = 1),
+                                  matrix(c(..3, ..4), nrow = 1),
+                                  fun = distHaversine))
+  )
+
+listing_clean = listing_clean %>%
+  left_join(listing_loc[, c("id", "dist_dt", "dist_park", "dist_empire")], by = "id")
+
+```
+
+### Model building and evaluation
+
+After eliminating highly correlated variables and scaling numerical data, I built four types of models and evaluated their performance. The measure of prediction accuracy is out-of-sample root mean squared error (RMSE). This metric evaluates how far off the predictions are from the actual values. A model with lower RMSE has better performance.  
+
+- **LASSO regression:** LASSO is a regularization technique used over regression in order to enhance the prediction accuracy and interpretability of the model. The algorithm reduces some coefficients to zero, thus performing automatic feature selection, and is especially useful when there is a large number of features. The lambda value in a LASSO model determines the amount of regularization. Larger lambda leads to more coefficients being pushed towards zero. I used cross-validation to select the best lambda value which minimizes cross-validation error, then built a LASSO regression model using this lambda value. 
+
+- **Random forest:** Random forest utilizes both bagging and feature randomness to create an uncorrelated forest of decision trees. The randomness introduced by the algorithm reduces the risk of overfitting by a single decision tree. I built a random forest model using the default parameters, which I found worked better than other parameters. 
+
+- **XGBoost:** XGBoost is an implementation of gradient boosted trees. Gradient boosting attempts to predict a target variable by combining the estimates of a set of simpler, weaker models. XBoost is computationally efficient and offers regularization to prevent overfitting, making it suitable for large data sets. Since the model is sensitive to its parameters, I found the best performing model after tuning several hyperparameters. 
+
+- **Quantile regression forest:** Combining quantile regression with random forest, the quantile regression forest estimates the selected quantile rather than the mean prediction from the trees. It can be used to predict the median, which is more robust to outliers in the data than the mean. In this project, I built a quantile regression forest using the default parameters.
+
+
+## 3 Results
+
+### Exploratory analysis
+
+```{r price-summary, results='hide'}
+
+# Listing price summary
+# Remove outliers
+
+summary(listing_clean$price)
+quantile(listing_clean$price, c(0.025, 0.975)) 
+
+top_prices = listing_clean %>%
+  select(id, name, price) %>%
+  arrange(desc(price))
+head(top_prices, 50)
+
+bottom_prices = listing_clean %>%
+  select(id, name, price) %>%
+  arrange(price)
+head(bottom_prices, 50)
+
+listing_map = filter(listing_clean, price <= 790 & price >= 36)  # keep 95% prices
+summary(listing_map$price)
+
+```
+
+Although the whole data set contains 46,403 observations, some of them are missing prices and removed. Further inspection shows that the top and bottom prices may be invalid. There are listings above 10,000 dollars per night and listings below 20 dollars per night, but their characteristics do not match with these abnormal prices. Thus, I removed observations with the top and the bottom prices to filter out invalid listings. The total number of observations left is 29,343. 
+
+Figure 1 plots the listings on a map of NYC, colored by prices. Airbnb rentals are scattered across the 5 boroughs of NYC, and there are high prices and low prices in each borough. However, Midtown and Lower Manhattan tend to have more high priced apartments than other areas. 
+
+```{r listing-map, fig.align = 'center', fig.cap = "Map of Airbnb listings in NYC"}
+
+# Code that uses the Google API are commented out
+
+# register_google(key = "GOOGLE_MAPS_APIKEY", write = TRUE)
+
+# nyc_map = get_map(location = c(lon = -73.935242, lat = 40.730610),
+#                   zoom = 11,
+#                   maptype = "roadmap")
+
+# listing_map_plot = ggmap(nyc_map) +
+#   geom_point(data = listing_map,
+#              aes(x = longitude, y = latitude, color = price),
+#              size = 0.5,
+#              alpha = 0.5) +
+#   scale_color_gradient(low = "blue", high = "red", name = "Price") +
+#   labs(x = "Longitude", y = "Latitude") +
+#   theme_minimal()
+# 
+# ggsave("results/listing_map_plot.png", plot = listing_map_plot, width = 7, height = 5, dpi = 300)
+
+knitr::include_graphics(here::here("results", "listing_map_plot.png"))
+
+```
+
+Figure 2 shows the price of the listings by room type. As expected, entire apartments have the highest price on average, and the price range of private rooms and shared rooms are closer. For each room type, there are still some listings with significantly higher prices, even after removing the outliers. 
+
+```{r room-type, fig.align='center', out.width="50%", out.height="50%", fig.cap="Price by room type"}
+
+ggplot(listing_map, aes(x = room_type, y = price)) +
+  geom_boxplot(outlier.shape = 1, fill = "skyblue", colour = "navy") +
+  labs(x = "Room Type", y = "Price") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+Table 1 shows the listings by the minimum number of nights required for booking. Most of the listings requires a minimum of 30 nights, likely due to a restriction on short-term rentals in NYC that came into effect in September 2023. I also noticed that prices tend to be lower for longer term rentals, which makes sense since hosts generally give reductions when the rental term is long. 
+
+```{r min-nights, out.width="50%"}
+
+count_min_nights = listing_map %>%
+  select(price, minimum_nights) %>%
+  mutate(
+    min_night = case_when(
+      minimum_nights < 7 ~ "Less than a week",
+      minimum_nights >= 7 & minimum_nights < 30 ~ "One week to one month",
+      minimum_nights >= 30 & minimum_nights < 90 ~ "One month to three months",
+      minimum_nights >= 90 ~ "More than three months"
+    ),
+    min_night = factor(min_night, 
+                       levels = c("Less than a week", 
+                                  "One week to one month", 
+                                  "One month to three months", 
+                                  "More than three months"))
+  ) %>%
+  group_by(min_night) %>%
+  summarize(
+    count = n(), 
+    mean_price = round(mean(price, na.rm = TRUE), 2), 
+    median_price = median(price, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+knitr::kable(count_min_nights,
+             col.names = c("Minimum number of nights", "Count", 
+                           "Average price", "Median price"),
+             caption = "Price by minimum stay requirement")
+
+```
+\newpage
+
+### Model evaluation
+
+```{r data-model}
+
+# Remove unused variables and NA
+# Remove outliers at 95%
+
+listing_model = listing_clean %>%
+  filter(price <= 790 & price >= 36) %>%
+  na.omit() %>%
+  select(-c(id, last_scraped, name, description, host_id, host_name, latitude, longitude, 
+            neighbourhood_cleansed)) %>%
+  select(price, everything()) %>%
+  mutate(neighbourhood_group_cleansed = factor(neighbourhood_group_cleansed))
+
+
+# Check variable correlation, remove highly correlated variables
+
+lm_vif = lm(price ~ ., data = listing_model)
+vif_values = vif(lm_vif)
+# print(vif_values)
+
+listing_model = listing_model %>%
+  select(-c(dist_park, dist_dt, review_scores_rating))
+
+
+# Scale numerical variables
+
+scale_var = c("host_listings_count", "accommodates", "bathrooms", "bedrooms",
+              "beds", "minimum_nights", "maximum_nights", "number_of_reviews",
+              "review_scores_accuracy", "review_scores_cleanliness", 
+              "review_scores_checkin", "review_scores_communication",
+              "review_scores_location", "review_scores_value", "days_first_review",
+              "days_last_review", "len_neighborhood_overview", "len_host_about",
+              "dist_empire")
+
+listing_model = listing_model %>%
+  mutate(across(all_of(scale_var), scale))
+
+```
+
+Before building the models, I first checked the correlation between the variables to avoid multicollinearity problem, by calculating the variance inflation factors. `dist_park`, `dist_dt`, and `review_scores_rating` are excluded from the set of predictors because they are highly correlated with other variables. Out of the three distance features, I chose to keep the distance to the Empire State Building, because the building not only serves as a top tourist site, but is also located at the center of the city. In addition, observations with NA values are removed, because NA values cannot be used in regression and random forest. All numerical variables are scaled.  
+
+```{r models}
+
+# Model 1: LASSO
+
+# Encode categorical variables before splitting
+data_encoded = model.matrix(~ . - 1, data = listing_model)
+data_encoded = as.data.frame(data_encoded)
+
+set.seed(123)
+airbnb_split = initial_split(data_encoded, prop = 0.8)
+airbnb_train = training(airbnb_split)
+airbnb_test = testing(airbnb_split)
+
+x_train = model.matrix(price ~ ., data = airbnb_train)
+y_train = airbnb_train$price
+
+# Choose best lambda
+lasso_cv = cv.glmnet(x_train, y_train, alpha = 1, family = "gaussian")
+best_lambda = lasso_cv$lambda.min
+
+# Best model
+lm_lasso = glmnet(x_train, y_train, alpha = 1, family = "gaussian", lambda = best_lambda)
+
+x_test = model.matrix(price ~ ., data = airbnb_test)
+y_test = airbnb_test$price
+pred_lasso = predict(lm_lasso, newx = x_test)
+rmse_lasso = sqrt(mean((y_test - pred_lasso)^2))  # 84.51431
+
+
+# Model 2: Random forest
+
+set.seed(123)
+airbnb_split = initial_split(listing_model, prop = 0.8)
+airbnb_train = training(airbnb_split)
+airbnb_test = testing(airbnb_split)
+
+# Default model, ntree=500, mtry=13
+airbnb_forest = randomForest(price ~ ., data = airbnb_train, importance = TRUE)
+rmse_forest = modelr::rmse(airbnb_forest, airbnb_test) # 69.84506
+
+
+# Model 3: XGBoost
+
+sparse_matrix = model.matrix(price ~ . -1, data = airbnb_train)
+dtrain = xgb.DMatrix(data = sparse_matrix, label = airbnb_train$price)
+
+new_sparse_matrix = model.matrix(price ~ . - 1, data = airbnb_test)
+dnew = xgb.DMatrix(data = new_sparse_matrix)
+
+params = list(
+  booster = "gbtree",
+  objective = "reg:squarederror",
+  eta = 0.1,
+  max_depth = 5,
+  subsample = 1,
+  colsample_bytree = 1
+)
+nrounds = 500
+
+set.seed(123)
+xgb_model = xgb.train(params = params, data = dtrain, nrounds = nrounds)
+
+pred_xgboost = predict(xgb_model, dnew)
+rmse_xgboost = sqrt(mean((pred_xgboost - airbnb_test$price)^2))  # 67.43793
+
+
+# Model 4: Quantile regression forest
+
+x_train = airbnb_train[, -1]
+y_train = airbnb_train$price
+x_test = airbnb_test[, -1]
+
+qrf_model = quantregForest(x = x_train, y = y_train)
+
+pred_qrf = predict(qrf_model, newdata = x_test, what=0.5)
+
+rmse_qrf = sqrt(mean((pred_qrf - airbnb_test$price)^2)) # 71.27767
+
+```
+
+Table 2 shows the RMSE values of the predictive models. Lower RMSE values indicate higher out-of-sample prediction accuracy. By comparison, XGBoost outperforms the other models by achieving an RMSE value of 67.43. Thus, I selected it as the model for price prediction. 
+
+```{r rmse}
+
+rmse_tab = rbind(rmse_lasso, rmse_forest, rmse_xgboost, rmse_qrf)
+rownames(rmse_tab) = c("LASSO regression", 
+                             "Random forest", 
+                             "XGBoost",
+                             "Quantile regression forest")
+
+knitr::kable(rmse_tab, 
+             col.names = c("Model", "RMSE"),
+             caption = "RMSE of Predictive Models")
+
+```
+
+### Feature importance
+
+Base on the XGBoost model, the top features that drive variation in price are the number of guests the property accommodates, the distance to Empire State building, the number of bedrooms and bathrooms, and the minimum number of nights required for booking. The results show that size of the apartment, location, and rental term are the most important things to consider when determining price. 
+
+```{r feature-important, fig.align='center', fig.cap='Feature importance in XGBoost model'}
+
+# Feature importance
+importance_matrix = xgb.importance(feature_names = colnames(sparse_matrix), model = xgb_model)
+
+ggplot(importance_matrix, aes(x = reorder(Feature, Gain), y = Gain))+
+  geom_col(fill = "skyblue") +
+  coord_flip() +
+  labs(x = "Feature", 
+       y = "Importance") +
+  theme_minimal()
+
+
+```
+
+Figure 4 presents the partial dependency plots of the important features. Price increases as the size of the property increases. Price decreases with further distance to city center and longer rental period. 
+
+```{r pdp, fig.align='center', fig.cap="Partial dependency plots"}
+
+# Partial dependency plot
+
+pdp1 = pdp::partial(xgb_model, pred.var = "accommodates", plot = TRUE, train = sparse_matrix)
+pdp2 = pdp::partial(xgb_model, pred.var = "dist_empire", plot = TRUE, train = sparse_matrix)
+pdp3 = pdp::partial(xgb_model, pred.var = "bathrooms", plot = TRUE, train = sparse_matrix)
+pdp4 = pdp::partial(xgb_model, pred.var = "minimum_nights", plot = TRUE, train = sparse_matrix)
+
+grid.arrange(pdp1, pdp2, pdp3, pdp4, nrow = 2, ncol = 2)
+
+```
+
+\newpage
+
+## 4 Conclusion
+
+Trained on the listing characteristics of Airbnb rentals, an XGBoost model outperforms other models by accurately predicting the listing price with an RMSE of 67.43. Important features that drive variation in price include the accommodation capacity, proximity to the city center, minimum stay requirements, and the number of bedrooms and bathrooms. Prices are higher when the apartment is large and close to city center. Since the Airbnb rentals in New York City are mostly long-term rentals with minimum stay requirement of longer than 30 days, the characteristics that affect prices in New York City may be different from those in other cities. Using listing characteristics and the XGBoost model, an Airbnb host can get a sense of whether their pricing is appropriate. 
+
+The approach of this project is limited by data access and resources, and several adjustments can potentially enhance the performance of the model. First, I do not have access to historical booking prices, only listed prices scraped monthly from the Airbnb website. This could introduce bias into the model, since the listed prices are not equivalent to booked prices. Some apartments in the data set may have never been booked at the listed price. Thus, training the model on the listing price may not provide accurate predictions of actual price. Second, price trend over time can significantly affect the pricing strategy of hosts. In this project, I did not consider change in the price of a listing over time, since it is complex to model market demand and seasonal factors. However, adding time series analysis can potentially increase the accuracy of the predictions. Finally, due to limited computational capacity, I did not perform extensive search on the optimal hyperparameters of the model. With resources and time permitting, a grid search or random search can be used in tuning a better model. Treating the NA values as it is, rather than omitting them, can also provide extra information for model training. 
+
+\newpage
+
+## Appendix
+
+```{r a1}
+
+data_dict = read.csv("results/appendix_t1.csv")
+
+knitr::kable(data_dict, caption = "Variable description")
+
+```
+
+\newpage
+
+```{r a2}
+
+count_neighborhood = table(listing_map$neighbourhood_group_cleansed)
+count_neighborhood = as.data.frame(count_neighborhood)
+colnames(count_neighborhood) = c("Borough", "Count")
+knitr::kable(count_neighborhood, caption = "Count of listings by borough. Most Airbnb rentals are located in Manhattan or Brooklyn, but there is a fair amount of apartments in each borough.")
+
+```
+
+```{r a4, fig.align='center', fig.cap="Distribution of ratings. Ratings for each aspect of the apartments are distrbuted similarly, with most ratings at 5 and few ratings below 3."}
+
+listing_rating = listing_map %>%
+  select(starts_with("review_scores_")) %>%
+  pivot_longer(
+    cols = c("review_scores_accuracy", "review_scores_cleanliness", 
+             "review_scores_checkin", "review_scores_communication",
+             "review_scores_location", "review_scores_value"), 
+    names_to = "rating_type", 
+    values_to = "score"
+  )
+
+rating_labels = c(
+  review_scores_accuracy = "Accuracy",
+  review_scores_cleanliness = "Cleanliness",
+  review_scores_checkin = "Check-in",
+  review_scores_communication = "Communication",
+  review_scores_location = "Location",
+  review_scores_value = "Value"
+)
+
+ggplot(listing_rating, aes(x = score)) +
+  geom_histogram(bins = 10, fill = "skyblue", color = "white") +
+  facet_wrap(~ rating_type, ncol = 3, labeller = labeller(rating_type = rating_labels)) +
+  labs(x = "Rating", y = "Count") +
+  theme_minimal()
+
+```
+
+\newpage
+
+```{r a5}
+
+knitr::kable(vif_values, caption = "Variance inflation factor (VIF) analysis")
+
+```
+
+
+
+

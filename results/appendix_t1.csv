@@ -1,44 +1,44 @@
-Name,Type,Description
-price,int,Price of listing (target variable)
-host_response_time,factor,Category for host response time
-host_response_rate,num,Rate at which a host responds to booking requests
-host_acceptance_rate,num,Rate at which a host accepts booking requests
-host_is_superhost,int,Indictor variable of whether the host is a superhost
-host_listings_count,int,Total number of listings of the host
-host_has_profile_pic,int,Indictor variable of whether the host has a profile picture
-host_identity_verified,int,Indictor variable of whether the host verified his/her identity
-neighbourhood_group_cleansed,factor,The borough that the property is located in 
-room_type,factor,Category for room type
-accommodates,int,Maximum number of guests that the property accommodates
-bathrooms,num,Number of bathrooms; half bath counted
-bedrooms,int,Number of bedrooms
-beds,int,Number of beds
-minimum_nights,int,Minimum number of nights required for booking
-maximum_nights,int,Maximum number of nights allowed for booking
-number_of_reviews,int,Number of reviews
-review_scores_rating,num,Overall rating (1-5)
-review_scores_accuracy,num,Rating for accuracy (1-5)
-review_scores_cleanliness,num,Rating for cleanliness (1-5)
-review_scores_checkin,num,Rating for check-in (1-5)
-review_scores_communication,num,Rating for communication (1-5)
-review_scores_location,num,Rating for location (1-5)
-review_scores_value,num,Rating for value (1-5)
-instant_bookable,int,Indicator variable of whether the guest can automatically book the listing
-refrigerator,int,Indicator variable of whether the property has a refrigerator
-microwave,int,Indicator variable of whether the property has a microwave
-washer,int,Indicator variable of whether the property has a washer
-pets_allowed,int,Indicator variable of whether pets are allowed on property
-extra_pillows_and_blankets,int,Indicator variable of whether the property has extra pillows and blankets
-days_first_review,int,Number of days since the first review
-days_last_review,int,Number of days since the last review
-len_neighborhood_overview,int,Character length of neighborhood description
-len_host_about,int,Character length of host description
-cozy_name,int,"Indicator variable of whether the title of the listing contains ""cozy"""
-spacious_name,int,"Indicator variable of whether the title of the listing contains ""spacious"""
-located_desc,int,"Indicator variable of whether the description of the listing contains ""located"""
-restaurants_desc,int,"Indicator variable of whether the description of the listing contains ""restaurants"""
-walk_desc,int,"Indicator variable of whether the description of the listing contains ""walk"""
-new_desc,int,"Indicator variable of whether the description of the listing contains ""new"""
-dist_empire,num,Distance to the Empire State Building
-dist_dt,num,Distance to the Central Park
-dist_park,num,Distance to the Downtown Financial District
+Name,Description
+price,Price of listing (target variable)
+host_response_time,Category for host response time
+host_response_rate,Rate at which a host responds to booking requests
+host_acceptance_rate,Rate at which a host accepts booking requests
+host_is_superhost,Indictor variable of whether the host is a superhost
+host_listings_count,Total number of listings of the host
+host_has_profile_pic,Indictor variable of whether the host has a profile picture
+host_identity_verified,Indictor variable of whether the host verified his/her identity
+neighbourhood_group_cleansed,The borough that the property is located in 
+room_type,Category for room type
+accommodates,Maximum number of guests that the property accommodates
+bathrooms,Number of bathrooms; half bath counted
+bedrooms,Number of bedrooms
+beds,Number of beds
+minimum_nights,Minimum number of nights required for booking
+maximum_nights,Maximum number of nights allowed for booking
+number_of_reviews,Number of reviews
+review_scores_rating,Overall rating (1-5)
+review_scores_accuracy,Rating for accuracy (1-5)
+review_scores_cleanliness,Rating for cleanliness (1-5)
+review_scores_checkin,Rating for check-in (1-5)
+review_scores_communication,Rating for communication (1-5)
+review_scores_location,Rating for location (1-5)
+review_scores_value,Rating for value (1-5)
+instant_bookable,Indicator variable of whether the guest can automatically book the listing
+refrigerator,Indicator variable of whether the property has a refrigerator
+microwave,Indicator variable of whether the property has a microwave
+washer,Indicator variable of whether the property has a washer
+pets_allowed,Indicator variable of whether pets are allowed on property
+extra_pillows_and_blankets,Indicator variable of whether the property has extra pillows and blankets
+days_first_review,Number of days since the first review
+days_last_review,Number of days since the last review
+len_neighborhood_overview,Character length of neighborhood description
+len_host_about,Character length of host description
+cozy_name,"Indicator variable of whether the title of the listing contains ""cozy"""
+spacious_name,"Indicator variable of whether the title of the listing contains ""spacious"""
+located_desc,"Indicator variable of whether the description of the listing contains ""located"""
+restaurants_desc,"Indicator variable of whether the description of the listing contains ""restaurants"""
+walk_desc,"Indicator variable of whether the description of the listing contains ""walk"""
+new_desc,"Indicator variable of whether the description of the listing contains ""new"""
+dist_empire,Distance to the Empire State Building
+dist_dt,Distance to the Central Park
+dist_park,Distance to the Downtown Financial District
