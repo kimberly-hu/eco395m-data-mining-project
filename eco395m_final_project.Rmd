@@ -408,6 +408,8 @@ ggplot(listing_map, aes(x = room_type, y = price)) +
 
 Table 1 shows the listings by the minimum number of nights required for booking. Most of the listings requires a minimum of 30 nights, likely due to a restriction on short-term rentals in NYC that came into effect in September 2023. I also noticed that prices tend to be lower for longer term rentals, which makes sense since hosts generally give reductions when the rental term is long. 
 
+Due to the page limit, additional exploratory analysis are in the appendix. 
+
 ```{r min-nights, out.width="50%"}
 
 count_min_nights = listing_map %>%
@@ -482,7 +484,7 @@ listing_model = listing_model %>%
 
 ```
 
-Before building the models, I first checked the correlation between the variables to avoid multicollinearity problem, by calculating the variance inflation factors. `dist_park`, `dist_dt`, and `review_scores_rating` are excluded from the set of predictors because they are highly correlated with other variables. Out of the three distance features, I chose to keep the distance to the Empire State Building, because the building not only serves as a top tourist site, but is also located at the center of the city. In addition, observations with NA values are removed, because NA values cannot be used in regression and random forest. All numerical variables are scaled.  
+Before building the models, I first checked the correlation between the variables to avoid multicollinearity problem, by calculating the variance inflation factors (results shown in the appendix). `dist_park`, `dist_dt`, and `review_scores_rating` are excluded from the set of predictors because they are highly correlated with other variables. Out of the three distance features, I chose to keep the distance to the Empire State Building, because the building not only serves as a top tourist site, but is also located at the center of the city. In addition, observations with NA values are removed, because NA values cannot be used in regression and random forest. All numerical variables are scaled.  
 
 ```{r models}
 
