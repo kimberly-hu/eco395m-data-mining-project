@@ -2,7 +2,6 @@
 Final project for ECO395M Data Mining and Statistical Learning
 
 Link to the findings: https://github.com/kimberly-hu/eco395m-data-mining-project/blob/main/eco395m_final_project.pdf
-Link to the code: https://github.com/kimberly-hu/eco395m-data-mining-project/blob/main/eco395m_final_project.Rmd
 
 ## Abstract
 
